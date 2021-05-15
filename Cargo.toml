@@ -1,0 +1,30 @@
+[package]
+name = "async-events"
+version = "0.1.0"
+authors = ["Markus Klein <markus-klein@live.de>"]
+edition = "2018"
+license = "MIT"
+
+# Link to github repository
+repository = "https://github.com/pacman82/async-events.git"
+
+# A short blurb about the package. This is not rendered in any format when
+# uploaded to crates.io (aka this is not markdown).
+description = "Waiting for external task completion in asynchronous Rust code"
+
+# This is a list of up to five keywords that describe this crate. Keywords
+# are searchable on crates.io, and you may choose any words that would
+# help someone find this crate.
+keywords = ["async", "task", "events"]
+
+# This is a list of up to five categories where this crate would fit.
+# Categories are a fixed list available at crates.io/category_slugs, and
+# they must match exactly.
+categories = ["concurrency"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+
+[dev-dependencies]
+tokio = { version = "1.6.0", features = ["full"] }
