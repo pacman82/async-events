@@ -9,7 +9,7 @@ on:
 jobs:
 
   release:
-    name: Build and release OS-X
+    name: Pubsish to crates.io
     runs-on: ubuntu-latest
 
     steps:
