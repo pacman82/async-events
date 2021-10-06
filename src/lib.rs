@@ -30,7 +30,7 @@ impl<T> Future for Observer<T> {
                 if let Some(ref mut waker) = &mut shared.waker {
                     // If a waker has been previously set, let's reuse the resources from the old
                     // one, rather than allocating a new one.
-                    waker.clone_from(&cx.waker())
+                    waker.clone_from(cx.waker())
                 } else {
                     shared.waker = Some(cx.waker().clone());
                 }
@@ -41,9 +41,10 @@ impl<T> Future for Observer<T> {
     }
 }
 
-/// Allows to create futures which won't complete until an associated event id is resolved. This
+/// Allows to create futures which will not complete until an associated event id is resolved. This
 /// is useful for creating futures waiting for completion on external events which are driven to
-/// completion outside of the current process. Waiting 
+/// completion outside of the current process.
+#[derive(Default)]
 pub struct AsyncEvents<K, T> {
     wakers: Mutex<Vec<(K, Weak<Mutex<Shared<T>>>)>>,
 }
