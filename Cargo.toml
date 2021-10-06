@@ -8,6 +8,10 @@ license = "MIT"
 # Link to github repository
 repository = "https://github.com/pacman82/async-events.git"
 
+# Specify docs.rs explicitly, otherwise crates.io does only proivde the link in the dedicated
+# page to this crate, but not in lists.
+documentation = "https://docs.rs/async-events/"
+
 # A short blurb about the package. This is not rendered in any format when
 # uploaded to crates.io (aka this is not markdown).
 description = "Waiting for external task completion in asynchronous Rust code"
