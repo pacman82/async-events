@@ -44,7 +44,6 @@ impl<T> Future for Observer<T> {
 /// Allows to create futures which will not complete until an associated event id is resolved. This
 /// is useful for creating futures waiting for completion on external events which are driven to
 /// completion outside of the current process.
-#[derive(Default)]
 pub struct AsyncEvents<K, T> {
     wakers: Mutex<Vec<Promise<K, T>>>,
 }
@@ -54,6 +53,12 @@ impl<K, T> AsyncEvents<K, T> {
         Self {
             wakers: Mutex::new(Vec::new()),
         }
+    }
+}
+
+impl<K, T> Default for AsyncEvents<K, T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
