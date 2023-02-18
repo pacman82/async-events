@@ -5,7 +5,7 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-/// State shared between Future and Promise
+/// State shared between [`Observer`] and [`AsyncEvents`]
 struct Shared<T> {
     result: Option<T>,
     /// A waker is used to tell the task execute that a futures task may have proceeded and it is
@@ -15,7 +15,7 @@ struct Shared<T> {
 }
 
 /// A Future which is completed, once its associated event is resolved. See
-/// [`AsyncEvents::wait_for_output`].
+/// [`AsyncEvents::output_of`].
 pub struct Observer<T> {
     shared: Arc<Mutex<Shared<T>>>,
 }
@@ -44,6 +44,30 @@ impl<T> Future for Observer<T> {
 /// Allows to create futures which will not complete until an associated event id is resolved. This
 /// is useful for creating futures waiting for completion on external events which are driven to
 /// completion outside of the current process.
+///
+/// ```
+/// use std::time::Duration;
+/// use async_events::AsyncEvents;
+///
+/// async fn foo(events: &AsyncEvents<u32, &'static str>) {
+///     // This is a future waiting for an event with key `1` to resover its output.
+///     let observer = events.output_of(1);
+///     // We can have multiple observers for the same event, if we want to.
+///     let another_observer = events.output_of(1);
+///
+///     // This will block until the event is resolved
+///     let result = observer.await;
+///     // Do something awesome with result
+///     println!("{result}");
+/// }
+///
+/// async fn bar(events: &AsyncEvents<u32, &'static str>) {
+///     // All observers waiting for `1` wake up and their threads may continue. You could resolve
+///     // multiple events at once with the same result. This wakes up every observer associated
+///     // with the event.
+///     events.resolve_all_with(&[1], "Hello, World");
+/// }
+/// ```
 pub struct AsyncEvents<K, T> {
     wakers: Mutex<Vec<Promise<K, T>>>,
 }
@@ -68,8 +92,7 @@ where
 {
     /// A future associated with a peer, which can be resolved using `resolve_with`. You can call
     /// this method repeatedly to create multiple observers waiting for the same event.
-    ///
-    /// Attention: Do not call this method while holding a lock to `leases`.
+    #[deprecated(note = "Please use output_of instead")]
     pub fn wait_for_output(&self, event_id: K) -> Observer<V> {
         let strong = Arc::new(Mutex::new(Shared {
             result: None,
@@ -87,10 +110,48 @@ where
         Observer { shared: strong }
     }
 
-    /// Resolves all the pending futures associated with the given ids.
+    /// A future associated with a peer, which can be resolved using `resolve_with`. You can call
+    /// this method repeatedly to create multiple observers waiting for the same event.
     ///
-    /// * `event_ids`: Observers associated with these ids are resolved
-    /// * `output`: The result these futures will return in their `.await` call
+    /// Events are created **implicitly** by creating futures waiting for them. They are removed
+    /// then it is resolved. Waiting on an already resolved event will hang forever.
+    ///
+    /// ```
+    /// use async_events::AsyncEvents;
+    ///
+    /// # async fn example() {
+    /// let events = AsyncEvents::<u32, u32>::new();
+    ///
+    /// // Event occurs before we created the observer
+    /// events.resolve_all_with(&[1], 42);
+    ///
+    /// // Oh no, event `1` has already been resolved. This is likely to wait forever.
+    /// let answer = events.output_of(1).await;
+    /// # }
+    /// ```
+    pub fn output_of(&self, event_id: K) -> Observer<V> {
+        let strong = Arc::new(Mutex::new(Shared {
+            result: None,
+            waker: None,
+        }));
+        let weak = Arc::downgrade(&strong);
+        {
+            let mut wakers = self.wakers.lock().unwrap();
+            wakers.retain(|promise| !promise.is_orphan());
+            wakers.push(Promise {
+                key: event_id,
+                shared: weak,
+            });
+        }
+        Observer { shared: strong }
+    }
+
+    /// Resolves all the pending [`Observer`]s associated with the given ids. It would be typical to call
+    ///
+    /// * `event_ids`: Observers associated with these ids are resolved. It would be typical to call
+    ///   this method with only one element in `event_ids`. However in some error code paths it is
+    ///   not unusual that you can rule provide a result (usually `Err`) for many events at once.
+    /// * `output`: The result these [`Observer`]s will return in their `.await` call
     pub fn resolve_all_with(&self, event_ids: &[K], output: V)
     where
         V: Clone,
@@ -100,6 +161,18 @@ where
             if promise.is_match(event_ids) {
                 promise.resovle(output.clone())
             }
+        }
+    }
+
+    /// Resolves one pending [`Observer`] associated with the given event id. If no observer with
+    /// such an id exists, nothing happens.
+    ///
+    /// * `event_id`: One [`Observer`] associated with this ids is resolved.
+    /// * `output`: The result the [`Observer`] will return in its `.await` call
+    pub fn resolve_one(&self, event_id: K, output: V) {
+        let mut wakers = self.wakers.lock().unwrap();
+        if let Some(promise) = wakers.iter_mut().find(|p| p.key == event_id) {
+            promise.resovle(output);
         }
     }
 }
@@ -133,7 +206,7 @@ impl<K, T> Promise<K, T> {
         query.contains(&self.key)
     }
 
-    /// No Future is watining anymore for this promise to be resolved.
+    /// No Observer is watining anymore for this promise to be resolved.
     fn is_orphan(&self) -> bool {
         self.shared.strong_count() == 0
     }
@@ -152,7 +225,7 @@ mod tests {
     #[tokio::test]
     async fn pending() {
         let pm: AsyncEvents<i32, ()> = AsyncEvents::new();
-        let future = pm.wait_for_output(1);
+        let future = pm.output_of(1);
         // Promise not yet fulfilled => Elapses due to timeout.
         timeout(ZERO, future).await.unwrap_err();
     }
@@ -160,19 +233,30 @@ mod tests {
     #[tokio::test]
     async fn resolved() {
         let pm = AsyncEvents::new();
-        let future = pm.wait_for_output(1);
+        let future = pm.output_of(1);
         pm.resolve_all_with(&[1], 42);
         // Promise fulfilled => Return result
         assert_eq!(42, timeout(ZERO, future).await.unwrap());
     }
 
     #[tokio::test]
-    async fn multiple_observers() {
+    async fn multiple_observers_resolve_all() {
         let pm = AsyncEvents::new();
-        let obs_1 = pm.wait_for_output(1);
-        let obs_2 = pm.wait_for_output(1);
+        let obs_1 = pm.output_of(1);
+        let obs_2 = pm.output_of(1);
         pm.resolve_all_with(&[1], 42);
         assert_eq!(42, timeout(ZERO, obs_1).await.unwrap());
         assert_eq!(42, timeout(ZERO, obs_2).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn multiple_observers_resolve_one() {
+        let pm = AsyncEvents::new();
+        let obs_1 = pm.output_of(1);
+        let obs_2 = pm.output_of(1);
+        pm.resolve_one(1, 42);
+        assert_eq!(42, timeout(ZERO, obs_1).await.unwrap());
+        // Second observer times out
+        assert!(timeout(ZERO, obs_2).await.is_err());
     }
 }
