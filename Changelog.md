@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.0
+
+* Introduced `resolve_all_with` to support cancelling all futures.
+
 ## 0.1.2
 
 * Improved documentation.
