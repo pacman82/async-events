@@ -146,7 +146,7 @@ where
         Observer { shared: strong }
     }
 
-    /// Resolves all the pending [`Observer`]s associated with the given ids. It would be typical to call
+    /// Resolves all the pending [`Observer`]s associated with the given ids.
     ///
     /// * `event_ids`: Observers associated with these ids are resolved. It would be typical to call
     ///   this method with only one element in `event_ids`. However in some error code paths it is
@@ -159,7 +159,24 @@ where
         let mut wakers = self.wakers.lock().unwrap();
         for promise in wakers.iter_mut() {
             if promise.is_match(event_ids) {
-                promise.resovle(output.clone())
+                promise.resolve(output.clone())
+            }
+        }
+    }
+
+    /// Resolves all the pending [`Observer`]s. This resolves all events independent of their id.
+    /// This might come in useful e.g. during application shutdown.
+    /// 
+    /// * `output`: The result these [`Observer`]s will return in their `.await` call
+    /// * `f`: Function acting as a filter for event ids which are to be resolved, and as a factory
+    ///   for their results. If `f` returns `None` observers associated with the event id are not 
+    ///   resolved. If `Some` all observers with this Id are resolved.
+    pub fn resolve_all_if(&self, f: impl Fn(&K) -> Option<V>) where V: Clone,
+    {
+        let mut wakers = self.wakers.lock().unwrap();
+        for promise in wakers.iter_mut() {
+            if let Some(output) = f(&promise.key) {
+                promise.resolve(output)
             }
         }
     }
@@ -172,7 +189,7 @@ where
     pub fn resolve_one(&self, event_id: K, output: V) {
         let mut wakers = self.wakers.lock().unwrap();
         if let Some(promise) = wakers.iter_mut().find(|p| p.key == event_id) {
-            promise.resovle(output);
+            promise.resolve(output);
         }
     }
 }
@@ -188,7 +205,7 @@ struct Promise<K, T> {
 
 impl<K, T> Promise<K, T> {
     /// Set result and notify the runtime to poll the observing Future
-    fn resovle(&mut self, result: T) {
+    fn resolve(&mut self, result: T) {
         if let Some(strong) = self.shared.upgrade() {
             let mut shared = strong.lock().unwrap();
             shared.result = Some(result);
@@ -258,5 +275,20 @@ mod tests {
         assert_eq!(42, timeout(ZERO, obs_1).await.unwrap());
         // Second observer times out
         assert!(timeout(ZERO, obs_2).await.is_err());
+    }
+
+    /// This has been proven usefull if shutting down an application, and wanting to stop waiting
+    /// on all pending futures.
+    #[tokio::test]
+    async fn resolve_all_observers_with_the_same_output() {
+        let pm = AsyncEvents::new();
+        let obs_1 = pm.output_of(1);
+        let obs_2 = pm.output_of(2);
+
+        // We ignore event ID, we want to give the same result to all observers.
+        pm.resolve_all_if(|_event_id| Some(42));
+        
+        assert_eq!(42, timeout(ZERO, obs_1).await.unwrap());
+        assert_eq!(42, timeout(ZERO, obs_2).await.unwrap());
     }
 }
