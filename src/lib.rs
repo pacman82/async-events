@@ -156,22 +156,25 @@ where
     where
         V: Clone,
     {
-        let mut wakers = self.wakers.lock().unwrap();
-        for promise in wakers.iter_mut() {
-            if promise.is_match(event_ids) {
-                promise.resolve(output.clone())
+        self.resolve_all_if(|event_id| {
+            if event_ids.contains(event_id) {
+                Some(output.clone())
+            } else {
+                None
             }
-        }
+        })
     }
 
     /// Resolves all the pending [`Observer`]s. This resolves all events independent of their id.
     /// This might come in useful e.g. during application shutdown.
-    /// 
+    ///
     /// * `output`: The result these [`Observer`]s will return in their `.await` call
     /// * `f`: Function acting as a filter for event ids which are to be resolved, and as a factory
-    ///   for their results. If `f` returns `None` observers associated with the event id are not 
+    ///   for their results. If `f` returns `None` observers associated with the event id are not
     ///   resolved. If `Some` all observers with this Id are resolved.
-    pub fn resolve_all_if(&self, f: impl Fn(&K) -> Option<V>) where V: Clone,
+    pub fn resolve_all_if(&self, f: impl Fn(&K) -> Option<V>)
+    where
+        V: Clone,
     {
         let mut wakers = self.wakers.lock().unwrap();
         for promise in wakers.iter_mut() {
@@ -213,14 +216,6 @@ impl<K, T> Promise<K, T> {
                 waker.wake()
             }
         }
-    }
-
-    /// `true` if the promise key is contained in the query.
-    fn is_match(&self, query: &[K]) -> bool
-    where
-        K: Eq,
-    {
-        query.contains(&self.key)
     }
 
     /// No Observer is watining anymore for this promise to be resolved.
@@ -287,7 +282,7 @@ mod tests {
 
         // We ignore event ID, we want to give the same result to all observers.
         pm.resolve_all_if(|_event_id| Some(42));
-        
+
         assert_eq!(42, timeout(ZERO, obs_1).await.unwrap());
         assert_eq!(42, timeout(ZERO, obs_2).await.unwrap());
     }
